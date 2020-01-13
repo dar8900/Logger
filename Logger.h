@@ -14,6 +14,8 @@
 
 #define MEMORY_NOT_INITIALIZED	0xff
 
+#define LOG_TYPE	 LOG_T
+
 typedef enum
 {
 	SAVE_FAILED =   0,
@@ -24,7 +26,6 @@ typedef enum
 	CLEAR_FAILED,	
 	MAX_ERR_CODE
 }LOGGER_ERR_CODE;
-
 
 
 #pragma pack(1)
@@ -40,6 +41,7 @@ typedef struct
 }LOG_T;
 #pragma pack()
 
+
 #ifndef ARDUINO
 
 template <typename EeType> class EEP
@@ -49,6 +51,7 @@ public:
 	void put(uint32_t Addr, EeType Data);
 	EeType get(uint32_t Addr, EeType &Data);
 	uint32_t length();
+	void update(uint32_t Addr, EeType Data);
 private:
 	uint32_t MaxMemory;	
 	EeType *Memory;
@@ -94,7 +97,16 @@ template <typename EeType> uint32_t EEP<EeType>::length()
 {
 	return MaxMemory;
 }
-static EEP<LOG_T> EEPROM(1024);
+
+template <typename EeType> void EEP<EeType>::update(uint32_t Addr, EeType Data)
+{
+	EeType Tmp;
+	get(Addr, Tmp);
+	if(memcmp(&Tmp, &Data, sizeof(EeType)) != 0)
+		put(Addr, Data);
+}
+
+static EEP<LOG_TYPE> EEPROM(1024);
 #endif
 
 
@@ -221,7 +233,7 @@ template <typename LogType> uint8_t LOGGER<LogType>::clearMemory()
 	LogType DataVar;
 	memset(&DataVar, 0, TypeSize);
 	for(int i = 0; i < MemorySize; i++)
-		EEPROM.put(i * TypeSize , DataVar);
+		EEPROM.update(i, DataVar);
 	MemoryFull = false;
 	return CLEAR_OK;
 }

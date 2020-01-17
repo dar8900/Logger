@@ -1,30 +1,49 @@
 #ifndef LOGGER_H
 #define LOGGER_H
 
+#include <stdint.h>
+#include <string.h>
+#include <time.h>
+
 #define ARDUINO
 
 #ifdef ARDUINO
 #include <Arduino.h>
 #include <EEPROM.h>
+#define SCRIVI(roba) (Serial.println(roba))
+#else
+
+using namespace std;
+#define SCRIVI(roba) (cout << roba << endl)
+#define EEPROM_SIZE	 80
+
 #endif
 
-#include <stdint.h>
-#include <string.h>
-#include <time.h>
 
-#define MEMORY_NOT_INITIALIZED	0xff
+
+#define MEMORY_NOT_INITIALIZED	0xFFFFFFFF
 
 #define LOG_TYPE	 LOG_T
 
+
 typedef enum
 {
-	SAVE_FAILED =   0,
-	SAVE_OK,			
-	LOAD_FAILED,	    
-	LOAD_OK,			 
+	SAVE_SINGLE_FAILED =   0,
+	SAVE_SINGLE_OK,			
+	LOAD_SINGLE_FAILED,	    
+	LOAD_SINGLE_OK,		
+	SAVE_TOT_FAILED,
+	SAVE_TOT_OK,			
+	LOAD_TOT_FAILED,	    
+	LOAD_TOT_OK,	
+	LOAD_SET_FAILED,
+	LOAD_SET_OK,			 
 	CLEAR_OK,		
 	CLEAR_FAILED,	
-	MAX_ERR_CODE
+	INIT_OK,
+	OVER_MEMORY_SETTED,
+	MEMORY_NOT_INIT,
+	MAX_ERR_CODE = 255
 }LOGGER_ERR_CODE;
 
 
@@ -61,20 +80,23 @@ private:
 template <typename LogType> class LOGGER
 {
 public:
-	LOGGER(uint32_t MemorySizeSetted = MEMORY_NOT_INITIALIZED);
-	void setMemory(uint32_t MemorySizeSetted);
+	uint8_t begin(uint32_t MemorySizeSetted = MEMORY_NOT_INITIALIZED);
+	uint8_t setMemory(uint32_t MemorySizeSetted);
 	uint8_t saveAllData(LogType *AllBuffer, uint32_t BufferSize);
 	uint8_t saveSingleData(LogType SingleData);
 	uint8_t loadAllData(LogType *AllBuffer, uint32_t BufferSize);
 	uint8_t loadLastData(LogType *SingleData);
 	uint8_t loadSetData(LogType *Buffer, uint32_t BufferSize, uint32_t SetInit, uint32_t SetEnd);
 	uint8_t clearMemory();
+	void stampDbgMsg();
+	bool enableDbgMsg = false;
 
 private:
 	uint32_t MemorySize = MEMORY_NOT_INITIALIZED;
 	uint32_t LastDataAddr = 0;
-	uint16_t TypeSize;
+	uint16_t TypeSize = 1;
 	bool MemoryFull = false;
+	uint8_t RetValue;
 };
 
 
@@ -106,37 +128,89 @@ template <typename EeType> void EEP<EeType>::update(uint32_t Addr, EeType Data)
 		put(Addr, Data);
 }
 
-static EEP<LOG_TYPE> EEPROM(1024);
+static EEP<LOG_TYPE> EEPROM(EEPROM_SIZE);
 #endif
 
 
-template <typename LogType> LOGGER<LogType>::LOGGER(uint32_t MemorySizeSetted)
+template <typename LogType> uint8_t LOGGER<LogType>::begin(uint32_t MemorySizeSetted)
 {
-	TypeSize = sizeof(LogType);
-	MemorySize = MemorySizeSetted * TypeSize; 
-	if(MemorySize > EEPROM.length())
-		MemorySize = EEPROM.length();	
+	uint8_t Ret = MAX_ERR_CODE;
+	if(MemorySizeSetted == 0)
+	{
+		MemorySize = MEMORY_NOT_INITIALIZED;
+		Ret = MEMORY_NOT_INIT;
+	}
+	else
+	{
+		TypeSize = sizeof(LogType);
+		MemorySize = MemorySizeSetted * TypeSize; 
+		Ret = INIT_OK;
+		if(MemorySize > EEPROM.length())
+		{
+			MemorySize = EEPROM.length();	
+			Ret = OVER_MEMORY_SETTED;
+		}		
+	}
+	RetValue = Ret;
+	if(enableDbgMsg)
+		stampDbgMsg();
+	return Ret;
 }
 
-template <typename LogType> void LOGGER<LogType>::setMemory(uint32_t MemorySizeSetted)
+template <typename LogType> uint8_t LOGGER<LogType>::setMemory(uint32_t MemorySizeSetted)
 {
-	MemorySize = MemorySizeSetted * TypeSize; 
-	if(MemorySize > EEPROM.length())
-		MemorySize = EEPROM.length();
-	clearMemory();
+	uint8_t Ret = MAX_ERR_CODE;
+	if(MemorySizeSetted == 0)
+	{
+		MemorySize = MEMORY_NOT_INITIALIZED;
+		Ret = MEMORY_NOT_INIT;
+	}
+	else
+	{
+		MemorySize = MemorySizeSetted * TypeSize; 
+		Ret = INIT_OK;
+		if(MemorySize > EEPROM.length())
+		{
+			MemorySize = EEPROM.length();
+			Ret = OVER_MEMORY_SETTED;
+		}
+		Ret += clearMemory();
+	}
+	RetValue = Ret;
+	if(enableDbgMsg)
+		stampDbgMsg();	
+	return Ret;
 }
 
 template <typename LogType> uint8_t LOGGER<LogType>::saveAllData(LogType *AllBuffer, uint32_t BufferSize)
 {
 	int Addr = 0;
+	uint8_t Ret = MAX_ERR_CODE;
 	uint32_t MemorySetted = MemorySize / TypeSize;
 	if(MemorySize == MEMORY_NOT_INITIALIZED)
-		return SAVE_FAILED;
+	{
+		Ret = MEMORY_NOT_INIT + SAVE_TOT_FAILED;
+		RetValue = Ret;
+		if(enableDbgMsg)
+			stampDbgMsg();		
+		return Ret;
+	}
 	if(BufferSize * TypeSize > MemorySize)
-		return SAVE_FAILED;
+	{
+		Ret = SAVE_TOT_FAILED;
+		RetValue = Ret;
+		if(enableDbgMsg)
+			stampDbgMsg();		
+		return Ret;
+	}	
 	if(BufferSize > MemorySetted)
-		return SAVE_FAILED;
-
+	{
+		Ret = SAVE_TOT_FAILED;
+		RetValue = Ret;
+		if(enableDbgMsg)
+			stampDbgMsg();		
+		return Ret;
+	}		
 	if(LastDataAddr >= MemorySize)
 	{
 		LastDataAddr = 0;
@@ -147,13 +221,24 @@ template <typename LogType> uint8_t LOGGER<LogType>::saveAllData(LogType *AllBuf
 		EEPROM.put((Addr * TypeSize), AllBuffer[Addr]);
 	}
 	LastDataAddr += (Addr * TypeSize);
-	return SAVE_OK;
+	Ret = SAVE_TOT_OK;
+	RetValue = Ret;
+	if(enableDbgMsg)
+		stampDbgMsg();	
+	return Ret;	
 }
 
 template <typename LogType> uint8_t LOGGER<LogType>::saveSingleData(LogType SingleData)
 {
+	uint8_t Ret = MAX_ERR_CODE;
 	if(MemorySize == MEMORY_NOT_INITIALIZED)
-		return SAVE_FAILED;	
+	{
+		Ret = MEMORY_NOT_INIT + SAVE_SINGLE_FAILED;
+		RetValue = Ret;	
+		if(enableDbgMsg)
+			stampDbgMsg();			
+		return Ret;	
+	}
 	if(LastDataAddr >= MemorySize)
 	{
 		LastDataAddr = 0;
@@ -161,29 +246,57 @@ template <typename LogType> uint8_t LOGGER<LogType>::saveSingleData(LogType Sing
 	}
 	EEPROM.put(LastDataAddr, SingleData);
 	LastDataAddr += TypeSize;
-	return SAVE_OK;
+	Ret = SAVE_SINGLE_OK;
+	RetValue = Ret;
+	if(enableDbgMsg)
+		stampDbgMsg();	
+	return Ret;		
 }
 
 template <typename LogType> uint8_t LOGGER<LogType>::loadAllData(LogType *AllBuffer, uint32_t BufferSize)
 {
 	int Addr = 0;
+	uint8_t Ret = MAX_ERR_CODE;
 	uint32_t MemorySetted = MemorySize / TypeSize;
 	if(MemorySize == MEMORY_NOT_INITIALIZED)
-		return LOAD_FAILED;
+	{
+		Ret = MEMORY_NOT_INIT + LOAD_TOT_FAILED;
+		RetValue = Ret;
+		if(enableDbgMsg)
+			stampDbgMsg();		
+		return Ret;
+	}
 	if(BufferSize * TypeSize > MemorySize)
-		return LOAD_FAILED;
+	{
+		Ret = LOAD_TOT_FAILED;
+		RetValue = Ret;
+		if(enableDbgMsg)
+			stampDbgMsg();		
+		return Ret;
+	}	
 	if(LastDataAddr == 0)
-		return LOAD_FAILED;
+	{
+		Ret = LOAD_TOT_FAILED;
+		RetValue = Ret;
+		if(enableDbgMsg)
+			stampDbgMsg();		
+		return Ret;
+	}	
 	if(BufferSize > MemorySetted)
-		return LOAD_FAILED;
-	
+	{
+		Ret = LOAD_TOT_FAILED;
+		RetValue = Ret;
+		if(enableDbgMsg)
+			stampDbgMsg();		
+		return Ret;
+	}	
 	for(Addr = 0; Addr < BufferSize; Addr++)
 	{
 		EEPROM.get((Addr * TypeSize), AllBuffer[Addr]);
 	}
 	if(MemoryFull)
 	{
-		LogType Tmp1, Tmp2, Tmp3;
+		LogType Tmp1, Tmp2;
 		int LastIndex = LastDataAddr / TypeSize;
 		for(int i = 0; i < LastIndex; i++)
 		{
@@ -196,46 +309,153 @@ template <typename LogType> uint8_t LOGGER<LogType>::loadAllData(LogType *AllBuf
 			AllBuffer[BufferSize - 1 - i] = Tmp2;
 		}
 	}
-	return LOAD_OK;
+	Ret = LOAD_TOT_OK;
+	RetValue = Ret;
+	if(enableDbgMsg)
+		stampDbgMsg();	
+	return Ret;
 }
 
 template <typename LogType> uint8_t LOGGER<LogType>::loadLastData(LogType *SingleData)
 {
+	uint8_t Ret = MAX_ERR_CODE;
 	if(MemorySize == MEMORY_NOT_INITIALIZED)
-		return LOAD_FAILED;
+	{
+		Ret = MEMORY_NOT_INIT + LOAD_SINGLE_FAILED;
+		RetValue = Ret;
+		if(enableDbgMsg)
+			stampDbgMsg();		
+		return Ret;
+	}
 	if(LastDataAddr >= TypeSize)
 		EEPROM.get(LastDataAddr - TypeSize, *SingleData);
-	return LOAD_OK;
+	Ret = LOAD_SINGLE_OK;
+	RetValue = Ret;
+	if(enableDbgMsg)
+		stampDbgMsg();	
+	return Ret;		
 }
 
 template <typename LogType> uint8_t LOGGER<LogType>::loadSetData(LogType *Buffer, uint32_t BufferSize, uint32_t SetInit, uint32_t SetEnd)
 {
+	uint8_t Ret = MAX_ERR_CODE;
 	uint32_t MemorySetted = MemorySize / TypeSize;
 	if(MemorySize == MEMORY_NOT_INITIALIZED)
-		return LOAD_FAILED;
+	{
+		Ret = MEMORY_NOT_INIT + LOAD_SET_FAILED;
+		RetValue = Ret;
+		if(enableDbgMsg)
+			stampDbgMsg();		
+		return Ret;
+	}
 	if(BufferSize * TypeSize > MemorySize)
-		return LOAD_FAILED;	
+	{
+		Ret = LOAD_SET_FAILED;
+		RetValue = Ret;
+		if(enableDbgMsg)
+			stampDbgMsg();		
+		return Ret;
+	}	
     if(SetInit > MemorySetted || SetEnd > MemorySetted)
-		return LOAD_FAILED;
+	{
+		Ret = LOAD_SET_FAILED;
+		RetValue = Ret;
+		if(enableDbgMsg)
+			stampDbgMsg();		
+		return Ret;
+	}	
 	if((SetEnd - SetInit) > BufferSize)
-		return LOAD_FAILED;
+	{
+		Ret = LOAD_SET_FAILED;
+		RetValue = Ret;
+		if(enableDbgMsg)
+			stampDbgMsg();		
+		return Ret;
+	}	
 	for(int Addr = 0; Addr < (SetEnd - SetInit); Addr++)
 	{
 		EEPROM.get((SetInit * TypeSize) + (Addr * TypeSize), Buffer[Addr]);
 	}
-	return LOAD_OK;
+	Ret = LOAD_SET_OK;
+	RetValue = Ret;
+	if(enableDbgMsg)
+		stampDbgMsg();	
+	return Ret;
 }
 
 template <typename LogType> uint8_t LOGGER<LogType>::clearMemory()
 {
+	uint8_t Ret = MAX_ERR_CODE;
 	if(MemorySize == MEMORY_NOT_INITIALIZED)
-		return CLEAR_FAILED;
+	{
+		Ret = MEMORY_NOT_INIT + CLEAR_FAILED;
+		RetValue = Ret;
+		if(enableDbgMsg)
+			stampDbgMsg();		
+		return Ret;
+	}
 	LogType DataVar;
 	memset(&DataVar, 0, TypeSize);
 	for(int i = 0; i < MemorySize; i++)
 		EEPROM.update(i, DataVar);
 	MemoryFull = false;
-	return CLEAR_OK;
+	Ret = CLEAR_OK;
+	RetValue = Ret;
+	if(enableDbgMsg)
+		stampDbgMsg();	
+	return Ret;	
 }
+
+template <typename LogType> void LOGGER<LogType>::stampDbgMsg()
+{
+    switch(RetValue)
+    {
+        case SAVE_SINGLE_FAILED:   
+            SCRIVI("SCRITTURA SINGOLA FALLITA");
+            break;
+        case LOAD_SINGLE_FAILED:
+            SCRIVI("LETTURA SINGOLA FALLITA");
+            break;
+        case SAVE_TOT_FAILED:   
+            SCRIVI("SCRITTURA TOTALE FALLITA");
+            break;
+        case LOAD_TOT_FAILED:
+            SCRIVI("LETTURA TOTALE FALLITA");
+            break;            
+        case CLEAR_FAILED:
+            SCRIVI("CANCELLAZIONE FALLITA");
+            break;
+        case OVER_MEMORY_SETTED:
+            SCRIVI("MEMORIA SOVRADIMENSIONATA, IMPOSTATA QUELLA DI DEFAULT");
+            break;
+        case (OVER_MEMORY_SETTED + CLEAR_OK):
+            SCRIVI("MEMORIA SOVRADIMENSIONATA, IMPOSTATA QUELLA DI DEFAULT, RESET MEMORIA OK");
+            break;
+        case (MEMORY_NOT_INIT + SAVE_SINGLE_FAILED):
+            SCRIVI("MEMORIA NON INIZIALIZZATA, SCRITTURA SINGOLA FALLITA");
+            break;
+        case (MEMORY_NOT_INIT + LOAD_SINGLE_FAILED):
+            SCRIVI("MEMORIA NON INIZIALIZZATA, LETTURA SINGOLA FALLITA");
+            break;            
+        case (MEMORY_NOT_INIT + SAVE_TOT_FAILED):
+            SCRIVI("MEMORIA NON INIZIALIZZATA, SCRITTURA TOTALE FALLITA");
+            break;
+        case (MEMORY_NOT_INIT + LOAD_TOT_FAILED):
+            SCRIVI("MEMORIA NON INIZIALIZZATA, LETTURA TOTALE FALLITA");
+            break;
+        case (MEMORY_NOT_INIT + CLEAR_FAILED):
+            SCRIVI("MEMORIA NON INIZIALIZZATA, CANCELLAZIONE FALLITA");
+            break;   
+		case MAX_ERR_CODE:
+			SCRIVI("ERRORE SCONOSCIUTO");
+			break;			                     
+        default:
+            SCRIVI("TUTTO OK");
+            break;
+    }
+	RetValue = MAX_ERR_CODE;
+}
+
+
 
 #endif

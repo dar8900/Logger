@@ -1,11 +1,12 @@
 #include "Logger.h"
 
-LOGGER<String> Log(1024);
+LOGGER<LOG_TYPE> Log;
 
 
 void setup()
 {
-	String pero = "ciaone";
+	LOG_TYPE pero;
+	Log.begin(20);
 	Log.saveSingleData(pero);
 	Log.loadLastData(&pero);
 }

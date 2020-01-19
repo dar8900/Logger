@@ -8,9 +8,11 @@
 #define ARDUINO
 
 #ifdef ARDUINO
+
 #include <Arduino.h>
 #include <EEPROM.h>
 #define SCRIVI(roba) (Serial.println(roba))
+
 #else
 
 using namespace std;
@@ -25,6 +27,7 @@ using namespace std;
 
 #define LOG_TYPE	 LOG_T
 
+#define LOGGER_VERSION	 0.1
 
 typedef enum
 {

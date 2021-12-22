@@ -25,6 +25,7 @@ typedef struct
 #pragma pack()
 
 #ifdef ARDUINO
+
 #include <Arduino.h>
 
 #ifndef SDCARD_INSERT
@@ -33,6 +34,7 @@ typedef struct
 
 #ifdef DBG
 #define SCRIVI(roba) (Serial.println(roba))
+
 #else
 #define SCRIVI(roba)
 #endif
@@ -80,6 +82,7 @@ using namespace std;
 
 #define LOG_TYPE	 LOG_T
 
+#define LOGGER_VERSION	 0.1
 
 typedef enum
 {

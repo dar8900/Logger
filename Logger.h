@@ -7,17 +7,72 @@
 
 #define ARDUINO
 
+#define SDCARD_INSERT	
+
+#undef DBG
+
+#pragma pack(1)
+typedef struct 
+{
+	uint32_t timeStamp;
+	union 
+	{
+		uint32_t dataInt;
+		float dataFloat;
+	}Data;
+	
+}LOG_T;
+#pragma pack()
+
 #ifdef ARDUINO
 #include <Arduino.h>
+
+#ifndef SDCARD_INSERT
 #include <EEPROM.h>
+#endif
+
+#ifdef DBG
 #define SCRIVI(roba) (Serial.println(roba))
 #else
+#define SCRIVI(roba)
+#endif
+
+#ifdef SDCARD_INSERT
+#include <SPI.h>
+#include <SD.h>
+
+#define CREATE_DIR 	true
+#define REMOVE_DIR  false
+
+// Generic catch-all implementation.
+template <typename T_ty> struct TypeInfo { static const char * name; };
+template <typename T_ty> const char * TypeInfo<T_ty>::name = "unknown";
+// Handy macro to make querying stuff easier.
+#define TYPE_NAME(var) TypeInfo< typeof(var) >::name
+// Handy macro to make defining stuff easier.
+#define MAKE_TYPE_INFO(type)  template <> const char * TypeInfo<type>::name = #type;
+// Type-specific implementations.
+MAKE_TYPE_INFO( int )
+MAKE_TYPE_INFO( float )
+MAKE_TYPE_INFO( double )
+MAKE_TYPE_INFO( String  ) 
+MAKE_TYPE_INFO( LOG_T  ) 
+
+#endif // ifdef SDCARD_INSERT
+
+#else // #ifdef ARDUINO
 
 using namespace std;
+
+#ifdef DBG
 #define SCRIVI(roba) (cout << roba << endl)
+#else
+#define SCRIVI(roba)
+#endif
+
 #define EEPROM_SIZE	 80
 
-#endif
+#endif // #ifdef ARDUINO
 
 
 
@@ -43,26 +98,26 @@ typedef enum
 	INIT_OK,
 	OVER_MEMORY_SETTED,
 	MEMORY_NOT_INIT,
+	SD_OPEN = 100,
+	SD_NOT_OPEN,
+	SD_FORMAT_OK,
+	SD_FORMAT_FAILED,
+	SD_WRITE_OK,
+	SD_WRITE_FAILED,
+	SD_READ_OK,
+	SD_READ_FAILED,
+	SD_CREATE_DIR_OK,
+	SD_CREATE_DIR_FAILED,
+	SD_REMOVE_DIR_OK,
+	SD_REMOVE_DIR_FAILED,	
+	SD_REMOVE_OK,
+	SD_REMOVE_FAILED,
 	MAX_ERR_CODE = 255
 }LOGGER_ERR_CODE;
 
 
-#pragma pack(1)
-typedef struct 
-{
-	uint32_t timeStamp;
-	union 
-	{
-		uint32_t dataInt;
-		float dataFloat;
-	}Data;
-	
-}LOG_T;
-#pragma pack()
-
 
 #ifndef ARDUINO
-
 template <typename EeType> class EEP
 {
 public:
@@ -75,11 +130,13 @@ private:
 	uint32_t MaxMemory;	
 	EeType *Memory;
 };
-#endif
+#endif // ifndef ARDUINO
 
 template <typename LogType> class LOGGER
 {
 public:
+
+#ifndef SDCARD_INSERT	
 	uint8_t begin(uint32_t MemorySizeSetted = MEMORY_NOT_INITIALIZED);
 	uint8_t setMemory(uint32_t MemorySizeSetted);
 	uint8_t saveAllData(LogType *AllBuffer, uint32_t BufferSize);
@@ -88,14 +145,26 @@ public:
 	uint8_t loadLastData(LogType *SingleData);
 	uint8_t loadSetData(LogType *Buffer, uint32_t BufferSize, uint32_t SetInit, uint32_t SetEnd);
 	uint8_t clearMemory();
+#else
+	uint8_t begin(uint8_t SdCS = 10);
+	uint8_t writeInFile(LogType Data, char *FileName);
+	// uint8_t readInFile(LogType *Data, char *FileName, uint32_t HowMuchData);
+	uint8_t removeFile(char *FileName);
+	uint8_t manageDir(char *DirName, bool CreateOrRemove = CREATE_DIR);
+
+#endif	
+
 	void stampDbgMsg();
 	bool enableDbgMsg = false;
 
 private:
+
+#ifndef SDCARD_INSERT	
 	uint32_t MemorySize = MEMORY_NOT_INITIALIZED;
 	uint32_t LastDataAddr = 0;
 	uint16_t TypeSize = 1;
 	bool MemoryFull = false;
+#endif	
 	uint8_t RetValue;
 };
 
@@ -131,7 +200,7 @@ template <typename EeType> void EEP<EeType>::update(uint32_t Addr, EeType Data)
 static EEP<LOG_TYPE> EEPROM(EEPROM_SIZE);
 #endif
 
-
+#ifndef SDCARD_INSERT
 template <typename LogType> uint8_t LOGGER<LogType>::begin(uint32_t MemorySizeSetted)
 {
 	uint8_t Ret = MAX_ERR_CODE;
@@ -406,6 +475,168 @@ template <typename LogType> uint8_t LOGGER<LogType>::clearMemory()
 	return Ret;	
 }
 
+#else // ifndef SDCARD_INSERT
+
+template <typename LogType> uint8_t LOGGER<LogType>::begin(uint8_t SdCS)
+{
+	Sd2Card card;
+	SdVolume volume;
+	uint8_t Ret = MAX_ERR_CODE;
+	if(!SD.begin(SdCS))
+	{
+		Ret = SD_NOT_OPEN;
+		RetValue = Ret;
+		if(enableDbgMsg)
+			stampDbgMsg();		
+		return Ret;	
+	}
+	if(!volume.init(card))
+	{
+		Ret = SD_FORMAT_FAILED;
+		RetValue = Ret;
+		if(enableDbgMsg)
+			stampDbgMsg();		
+		return Ret;	
+	}
+	Ret = SD_OPEN;
+	RetValue = Ret;
+	if(enableDbgMsg)
+		stampDbgMsg();	
+	return Ret;
+}
+
+template <typename LogType> uint8_t LOGGER<LogType>::writeInFile(LogType Data, char *FileName)
+{
+	uint8_t Ret = MAX_ERR_CODE;
+	File File2Write = SD.open(FileName, FILE_WRITE);
+	String DataFileType = String(TYPE_NAME(Data));
+	if(File2Write)
+	{
+		if(DataFileType != "unknown")
+		{
+			if(DataFileType != "LOG_T")
+			{
+				File2Write.println(Data);
+			}
+			else
+			{
+				LOG_T *DataCpy = &Data;
+				time_t curtime = (time_t)DataCpy->timeStamp;
+				File2Write.print(ctime(&curtime));
+				File2Write.print("->");
+				File2Write.print(DataCpy->Data.dataFloat);
+				File2Write.println();
+				File2Write.close();
+			}
+			Ret = SD_WRITE_OK;
+		}
+		else
+			Ret = SD_WRITE_FAILED;
+	}
+	else
+		Ret = SD_WRITE_FAILED;
+
+	RetValue = Ret;
+	if(enableDbgMsg)
+		stampDbgMsg();
+	return Ret;
+}
+
+// template <typename LogType> uint8_t LOGGER<LogType>::readInFile(LogType *Data, char *FileName, uint32_t HowMuchData)
+// {
+// 	uint8_t Ret = MAX_ERR_CODE;
+// 	// File File2Read = SD.open(FileName, FILE_READ);
+// 	// String DataFileType = String(TYPE_NAME(*Data));
+// 	// if(File2Read)
+// 	// {
+// 	// 	if(File2Read.available() > 0)
+// 	// 	{
+// 	// 		if(DataFileType != "unknown")
+// 	// 		{
+// 	// 			if(DataFileType != "LOG_T")
+// 	// 			{
+// 	// 				for(int i = 0; i < HowMuchData;)
+// 	// 				{
+// 	// 					if(DataFileType == "int" || DataFileType == "float")
+// 	// 					{
+// 	// 						for(int i = 0; i < 4; i++)
+// 	// 						{
+// 	// 							*Data |= File2Read.read();
+// 	// 							if(i < 3)
+// 	// 								*Data <<= 8;
+// 	// 						}
+// 	// 					}
+// 	// 				}
+// 	// 			}	
+// 	// 			else
+// 	// 			{
+
+// 	// 			}		
+// 	// 		}
+// 	// 		else
+// 	// 			Ret = SD_READ_FAILED;
+// 	// 	}
+// 	// 	else
+// 	// 		Ret = SD_READ_FAILED;
+// 	// }
+// 	// else
+// 	// 	Ret = SD_READ_FAILED;
+// 	// RetValue = Ret;
+// 	// if(enableDbgMsg)
+// 	// 	stampDbgMsg();
+// 	return Ret;	
+// }
+
+
+template <typename LogType> uint8_t LOGGER<LogType>::removeFile(char *FileName)
+{
+	uint8_t Ret = MAX_ERR_CODE;
+	if(SD.exists(FileName))
+	{
+		SD.remove(FileName);
+		Ret = SD_REMOVE_OK;
+	}
+	else
+		Ret = SD_REMOVE_FAILED;
+
+	RetValue = Ret;
+	if(enableDbgMsg)
+		stampDbgMsg();
+	return Ret;
+}
+
+template <typename LogType> uint8_t LOGGER<LogType>::manageDir(char *DirName, bool CreateOrRemove)
+{
+	uint8_t Ret = MAX_ERR_CODE;
+	if(CreateOrRemove == CREATE_DIR)
+	{
+		if(SD.exists(DirName))
+			Ret = SD_CREATE_DIR_FAILED;
+		else
+		{
+			SD.mkdir(DirName);
+			Ret = SD_CREATE_DIR_OK;
+		}
+	}
+	else
+	{
+		if(!SD.exists(DirName))
+			Ret = SD_REMOVE_DIR_FAILED;
+		else
+		{
+			SD.rmdir(DirName);
+			Ret = SD_REMOVE_DIR_OK;
+		}
+	}
+	RetValue = Ret;
+	if(enableDbgMsg)
+		stampDbgMsg();
+	return Ret;	
+}
+
+
+#endif // ifndef SDCARD_INSERT
+
 template <typename LogType> void LOGGER<LogType>::stampDbgMsg()
 {
     switch(RetValue)
@@ -446,6 +677,48 @@ template <typename LogType> void LOGGER<LogType>::stampDbgMsg()
         case (MEMORY_NOT_INIT + CLEAR_FAILED):
             SCRIVI("MEMORIA NON INIZIALIZZATA, CANCELLAZIONE FALLITA");
             break;   
+		case SD_OPEN:
+			SCRIVI("SD APERTA CON SUCCESSO");
+			break;
+		case SD_NOT_OPEN:
+			SCRIVI("APERTURA SD FALLITA");
+			break;
+		case SD_FORMAT_OK:
+			SCRIVI("FORMATO FILE SYSTEM SD CORRETTO");
+			break;
+		case SD_FORMAT_FAILED:
+			SCRIVI("FORMATO FILE SYSTEM SD ERRATO (FAT 16 O FAT 32)");
+			break;
+		case SD_WRITE_OK:
+			SCRIVI("SCRITTURA SD RIUSCITA");
+			break;
+		case SD_WRITE_FAILED:
+			SCRIVI("SCRITTURA SD FALLITA");
+			break;
+		case SD_READ_OK:
+			SCRIVI("LETTURA SD RIUSCITA");
+			break;
+		case SD_READ_FAILED:
+			SCRIVI("LETTURA SD FALLITA");
+			break;
+		case SD_CREATE_DIR_OK:
+			SCRIVI("CREAZIONE DIRECTORY SD RIUSCITA");
+			break;
+		case SD_CREATE_DIR_FAILED:
+			SCRIVI("CREAZIONE DIRECTORY SD FALLITA");
+			break;
+		case SD_REMOVE_DIR_OK:
+			SCRIVI("RIMOZIONE DIRECTORY SD RIUSCITA");
+			break;
+		case SD_REMOVE_DIR_FAILED:
+			SCRIVI("RIMOZIONE DIRECTORY SD FALLITA");			
+			break;
+		case SD_REMOVE_OK:
+			SCRIVI("FILE ELIMINATO CORRETTAMENTE");		
+			break;
+		case SD_REMOVE_FAILED:
+			SCRIVI("ELIMINAZIONE FILE NON RIUSCITA");		
+			break;
 		case MAX_ERR_CODE:
 			SCRIVI("ERRORE SCONOSCIUTO");
 			break;			                     

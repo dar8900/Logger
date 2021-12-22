@@ -6,9 +6,8 @@ LOGGER<LOG_TYPE> Log;
 void setup()
 {
 	LOG_TYPE pero;
-	Log.begin(20);
-	Log.saveSingleData(pero);
-	Log.loadLastData(&pero);
+	Log.begin(10);
+	Log.manageDir("rootA", true);
 }
 
 
